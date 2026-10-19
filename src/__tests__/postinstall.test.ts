@@ -59,3 +59,37 @@ test(
     t.assert.strictEqual(existsSync(join(dir, skillFile)), true);
   },
 );
+
+const skipping: Record<string, string>[] = [
+  { CI: "true" },
+  { CI: "1" },
+  { TRACEBOUND_SKIP_SKILLS: "1" },
+  { TRACEBOUND_SKIP_SKILLS: "true" },
+];
+
+for (const env of skipping) {
+  test(`postinstall writes nothing with ${JSON.stringify(env)}`, async (t: TestContext) => {
+    const { status, dir } = await runPostinstall(t, env);
+    t.assert.strictEqual(status, 0);
+    t.assert.strictEqual(existsSync(join(dir, ".claude")), false);
+  });
+}
+
+const installing: Record<string, string>[] = [
+  { CI: "false" },
+  { CI: "" },
+  { TRACEBOUND_SKIP_SKILLS: "0" },
+  { TRACEBOUND_SKIP_SKILLS: "false" },
+];
+
+for (const env of installing) {
+  test(
+    `postinstall still installs with ${JSON.stringify(env)}`,
+    { skip: built ? false : "needs `npm run build` first" },
+    async (t: TestContext) => {
+      const { status, dir } = await runPostinstall(t, env);
+      t.assert.strictEqual(status, 0);
+      t.assert.strictEqual(existsSync(join(dir, skillFile)), true);
+    },
+  );
+}
