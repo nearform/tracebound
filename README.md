@@ -51,8 +51,10 @@ tracebound install-skills
 ```
 
 By default, the command writes to `.claude/skills/tracebound/`. It is idempotent
-— re-running it reports already-installed skills as up-to-date and never
-overwrites a skill you have edited locally unless you pass `--force`. The CLI
+— re-running it reports already-installed skills as up-to-date, refreshes a
+skill that is still exactly the version it installed (so upgrading the CLI
+upgrades its skills), and never overwrites a skill you have edited locally
+unless you pass `--force`. The CLI
 also runs `install-skills` from its `postinstall` hook as a best-effort default
 when your `cwd` at install time is the target project. The hook does nothing for a
 global install (`npm i -g`), since that is not a project, nor when `CI` is set. To
@@ -284,9 +286,11 @@ Exit codes:
 Copies every skill bundled with the CLI into the local project's skills
 directory. By default the target is `.claude/skills/tracebound/`. Skills that
 already exist locally with the same content are reported as up-to-date; skills
-you have edited locally are NOT overwritten unless `--force` is passed. When
-the CLI is installed in environments that disable `postinstall` (or when you
-upgrade), re-run this command to refresh the local copy.
+that are still exactly the version this command installed earlier are
+refreshed to the bundled one, using the hashes it records in `.installed.json`
+beside the skills; skills you have edited locally are NOT overwritten unless
+`--force` is passed. When the CLI is installed in environments that disable
+`postinstall`, re-run this command to install or refresh the local copy.
 
 ```
 Options:

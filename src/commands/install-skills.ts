@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdir,
   readdir,
@@ -20,6 +21,7 @@ export interface InstallSkillsResult {
   cwdAbsolute: string;
   targetDir: string;
   installed: string[];
+  updated: string[];
   upToDate: string[];
   skipped: string[];
   dryRun: boolean;
@@ -27,6 +29,35 @@ export interface InstallSkillsResult {
 }
 
 export const DEFAULT_TARGET = ".claude/skills/tracebound";
+
+// Records the hash of every SKILL.md as this command last wrote it, so a later
+// run can tell a copy the user edited from an old shipped version: only the
+// latter is refreshed.
+export const MANIFEST_FILE = ".installed.json";
+
+function sha256(contents: string): string {
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+async function readManifest(path: string): Promise<Record<string, string>> {
+  const raw = await readIfExists(path);
+  if (raw === undefined) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const skills = (parsed as { skills?: unknown }).skills;
+    if (typeof skills !== "object" || skills === null) return {};
+    return Object.fromEntries(
+      Object.entries(skills).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    // An unreadable manifest only costs the automatic refresh: every differing
+    // copy is then treated as edited, which is the safe reading.
+    return {};
+  }
+}
 
 export function bundledSkillsDir(): string {
   return resolve(import.meta.dirname, "..", "..", "skills");
@@ -94,6 +125,7 @@ export async function runInstallSkills(
       cwdAbsolute,
       targetDir: "",
       installed: [],
+      updated: [],
       upToDate: [],
       skipped: [],
       dryRun,
@@ -140,11 +172,16 @@ export async function runInstallSkills(
     cwdAbsolute,
     targetDir,
     installed: [],
+    updated: [],
     upToDate: [],
     skipped: [],
     dryRun,
     selfInstallSkipped: false,
   };
+
+  const manifestPath = join(targetDir, MANIFEST_FILE);
+  const manifest = await readManifest(manifestPath);
+  const recorded = { ...manifest };
 
   for (const skill of await listSkillNames(bundledDir)) {
     const sourcePath = join(bundledDir, skill, "SKILL.md");
@@ -160,24 +197,38 @@ export async function runInstallSkills(
         await mkdir(dirname(targetPath), { recursive: true });
         await writeFile(targetPath, sourceContents, "utf8");
       }
+      recorded[skill] = sha256(sourceContents);
       result.installed.push(skill);
       continue;
     }
 
     if (targetContents === sourceContents) {
+      // Identical to what ships, so nothing of the user's is in it: record it,
+      // which is how copies from before the manifest existed become refreshable.
+      recorded[skill] = sha256(sourceContents);
       result.upToDate.push(skill);
       continue;
     }
 
-    if (options.force) {
+    const untouched = manifest[skill] === sha256(targetContents);
+    if (untouched || options.force) {
       if (!dryRun) {
         await writeFile(targetPath, sourceContents, "utf8");
       }
-      result.installed.push(skill);
+      recorded[skill] = sha256(sourceContents);
+      (untouched ? result.updated : result.installed).push(skill);
       continue;
     }
 
     result.skipped.push(skill);
+  }
+
+  if (!dryRun && JSON.stringify(recorded) !== JSON.stringify(manifest)) {
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ skills: recorded }, null, 2) + "\n",
+      "utf8",
+    );
   }
 
   return result;
@@ -201,6 +252,12 @@ export function reportText(result: InstallSkillsResult): string {
       `${styleText("green", "✓")} ${verb}: ${join(result.targetDir, skill)}`,
     );
   }
+  const updateVerb = result.dryRun ? "would update" : "updated";
+  for (const skill of result.updated) {
+    lines.push(
+      `${styleText("green", "✓")} ${updateVerb}: ${join(result.targetDir, skill)}`,
+    );
+  }
   if (result.upToDate.length > 0) {
     lines.push(
       styleText("dim", `up-to-date: ${result.upToDate.join(", ")}`),
@@ -216,7 +273,7 @@ export function reportText(result: InstallSkillsResult): string {
   lines.push(
     styleText(
       "dim",
-      `${result.installed.length} installed, ${result.upToDate.length} up-to-date, ${result.skipped.length} skipped → ${result.targetDir}`,
+      `${result.installed.length} installed, ${result.updated.length} updated, ${result.upToDate.length} up-to-date, ${result.skipped.length} skipped → ${result.targetDir}`,
     ),
   );
 
