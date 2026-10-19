@@ -2,6 +2,12 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// A global install is not a project, and INIT_CWD is wherever npm happened to
+// be run from, so writing there would put .claude/ into an unrelated directory.
+if (process.env.npm_config_global === "true") {
+  process.exit(0);
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(here, "..", "dist", "cli.js");
 const cwd = process.env.INIT_CWD ?? ".";

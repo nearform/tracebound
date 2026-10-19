@@ -54,7 +54,8 @@ By default, the command writes to `.claude/skills/tracebound/`. It is idempotent
 — re-running it reports already-installed skills as up-to-date and never
 overwrites a skill you have edited locally unless you pass `--force`. The CLI
 also runs `install-skills` from its `postinstall` hook as a best-effort default
-when your `cwd` at install time is the target project.
+when your `cwd` at install time is the target project. The hook does nothing for a
+global install (`npm i -g`), since that is not a project.
 
 ---
 
