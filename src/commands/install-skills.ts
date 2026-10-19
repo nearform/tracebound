@@ -24,6 +24,9 @@ export interface InstallSkillsResult {
   updated: string[];
   upToDate: string[];
   skipped: string[];
+  // The skipped skills that have no recorded hash: nothing says the user edited
+  // them, only that they differ from the bundled copy.
+  unrecorded: string[];
   dryRun: boolean;
   selfInstallSkipped: boolean;
 }
@@ -128,6 +131,7 @@ export async function runInstallSkills(
       updated: [],
       upToDate: [],
       skipped: [],
+      unrecorded: [],
       dryRun,
       selfInstallSkipped: true,
     };
@@ -175,6 +179,7 @@ export async function runInstallSkills(
     updated: [],
     upToDate: [],
     skipped: [],
+    unrecorded: [],
     dryRun,
     selfInstallSkipped: false,
   };
@@ -221,6 +226,7 @@ export async function runInstallSkills(
     }
 
     result.skipped.push(skill);
+    if (manifest[skill] === undefined) result.unrecorded.push(skill);
   }
 
   if (!dryRun && JSON.stringify(recorded) !== JSON.stringify(manifest)) {
@@ -264,8 +270,11 @@ export function reportText(result: InstallSkillsResult): string {
     );
   }
   for (const skill of result.skipped) {
+    const reason = result.unrecorded.includes(skill)
+      ? "differs from the bundled copy and there is no record of installing it, so it may be edited or just older; use --force to overwrite"
+      : "modified locally, use --force to overwrite";
     lines.push(
-      `${styleText("yellow", "!")} skipped (modified locally, use --force to overwrite): ${join(result.targetDir, skill)}`,
+      `${styleText("yellow", "!")} skipped (${reason}): ${join(result.targetDir, skill)}`,
     );
   }
 

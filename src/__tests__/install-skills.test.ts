@@ -17,6 +17,7 @@ import {
   runInstallSkills,
   DEFAULT_TARGET,
   MANIFEST_FILE,
+  reportText,
 } from "../commands/install-skills.ts";
 
 async function makeTmpDir(t: TestContext): Promise<string> {
@@ -321,10 +322,12 @@ test("runInstallSkills does not refresh a skill the user edited after installing
 
   t.assert.deepStrictEqual(result.updated, []);
   t.assert.deepStrictEqual(result.skipped, [SKILL]);
+  t.assert.deepStrictEqual(result.unrecorded, []);
   t.assert.strictEqual(
     await readFile(path, "utf8"),
     "old release text\nMY EDIT\n",
   );
+  t.assert.match(reportText(result), /modified locally/);
 });
 
 test("runInstallSkills treats a differing skill with no manifest entry as edited", async (t: TestContext) => {
@@ -337,7 +340,9 @@ test("runInstallSkills treats a differing skill with no manifest entry as edited
   const result = await runInstallSkills({ cwd });
 
   t.assert.deepStrictEqual(result.skipped, [SKILL]);
+  t.assert.deepStrictEqual(result.unrecorded, [SKILL]);
   t.assert.strictEqual(await readFile(path, "utf8"), "from before the manifest\n");
+  t.assert.match(reportText(result), /there is no record of installing it/);
 });
 
 test("runInstallSkills adopts an identical copy that predates the manifest", async (t: TestContext) => {
