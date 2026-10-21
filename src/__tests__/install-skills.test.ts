@@ -9,12 +9,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
   bundledSkillsDir,
   runInstallSkills,
   DEFAULT_TARGET,
+  MANIFEST_FILE,
+  reportText,
 } from "../commands/install-skills.ts";
 
 async function makeTmpDir(t: TestContext): Promise<string> {
@@ -246,4 +249,153 @@ test("runInstallSkills rejects an intermediate --target symlink that escapes --c
     () => runInstallSkills({ cwd: project }),
     /--target resolved through a symlink that escapes --cwd/,
   );
+});
+
+const SKILL = "analyze-traces";
+const sha256 = (contents: string) =>
+  createHash("sha256").update(contents).digest("hex");
+
+async function readManifestSkills(
+  targetDir: string,
+): Promise<Record<string, string>> {
+  const raw = await readFile(join(targetDir, MANIFEST_FILE), "utf8");
+  return (JSON.parse(raw) as { skills: Record<string, string> }).skills;
+}
+
+// Leaves the skill as an older release would have installed it: different from
+// the bundled copy, with the manifest recording that exact content.
+async function installAsOldRelease(
+  targetDir: string,
+  oldContents: string,
+): Promise<string> {
+  const path = join(targetDir, SKILL, "SKILL.md");
+  await writeFile(path, oldContents, "utf8");
+  const skills = await readManifestSkills(targetDir);
+  skills[SKILL] = sha256(oldContents);
+  await writeFile(
+    join(targetDir, MANIFEST_FILE),
+    JSON.stringify({ skills }),
+    "utf8",
+  );
+  return path;
+}
+
+test("runInstallSkills records the hash of every skill it installs", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+
+  const result = await runInstallSkills({ cwd });
+
+  const skills = await readManifestSkills(result.targetDir);
+  t.assert.deepStrictEqual(Object.keys(skills).sort(), result.installed);
+  const bundled = await readFile(
+    join(bundledSkillsDir(), SKILL, "SKILL.md"),
+    "utf8",
+  );
+  t.assert.strictEqual(skills[SKILL], sha256(bundled));
+});
+
+test("runInstallSkills refreshes a skill that is still the version it installed", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = await installAsOldRelease(first.targetDir, "old release text\n");
+
+  const result = await runInstallSkills({ cwd });
+
+  t.assert.deepStrictEqual(result.updated, [SKILL]);
+  t.assert.deepStrictEqual(result.skipped, []);
+  const bundled = await readFile(
+    join(bundledSkillsDir(), SKILL, "SKILL.md"),
+    "utf8",
+  );
+  t.assert.strictEqual(await readFile(path, "utf8"), bundled);
+  const skills = await readManifestSkills(result.targetDir);
+  t.assert.strictEqual(skills[SKILL], sha256(bundled));
+});
+
+test("runInstallSkills does not refresh a skill the user edited after installing it", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = await installAsOldRelease(first.targetDir, "old release text\n");
+  await writeFile(path, "old release text\nMY EDIT\n", "utf8");
+
+  const result = await runInstallSkills({ cwd });
+
+  t.assert.deepStrictEqual(result.updated, []);
+  t.assert.deepStrictEqual(result.skipped, [SKILL]);
+  t.assert.deepStrictEqual(result.unrecorded, []);
+  t.assert.strictEqual(
+    await readFile(path, "utf8"),
+    "old release text\nMY EDIT\n",
+  );
+  t.assert.match(reportText(result), /modified locally/);
+});
+
+test("runInstallSkills treats a differing skill with no manifest entry as edited", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = join(first.targetDir, SKILL, "SKILL.md");
+  await writeFile(path, "from before the manifest\n", "utf8");
+  await rm(join(first.targetDir, MANIFEST_FILE));
+
+  const result = await runInstallSkills({ cwd });
+
+  t.assert.deepStrictEqual(result.skipped, [SKILL]);
+  t.assert.deepStrictEqual(result.unrecorded, [SKILL]);
+  t.assert.strictEqual(await readFile(path, "utf8"), "from before the manifest\n");
+  t.assert.match(reportText(result), /there is no record of installing it/);
+});
+
+test("runInstallSkills adopts an identical copy that predates the manifest", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  await rm(join(first.targetDir, MANIFEST_FILE));
+
+  const second = await runInstallSkills({ cwd });
+  t.assert.deepStrictEqual(second.upToDate.sort(), first.installed.slice().sort());
+
+  // Recorded now, so a later release can refresh it.
+  const path = await installAsOldRelease(first.targetDir, "old release text\n");
+  const third = await runInstallSkills({ cwd });
+  t.assert.deepStrictEqual(third.updated, [SKILL]);
+  t.assert.ok((await readFile(path, "utf8")).length > "old release text\n".length);
+});
+
+test("runInstallSkills reads a corrupt manifest as empty and edits nothing", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = await installAsOldRelease(first.targetDir, "old release text\n");
+  await writeFile(join(first.targetDir, MANIFEST_FILE), "{not json", "utf8");
+
+  const result = await runInstallSkills({ cwd });
+
+  t.assert.deepStrictEqual(result.skipped, [SKILL]);
+  t.assert.strictEqual(await readFile(path, "utf8"), "old release text\n");
+});
+
+test("runInstallSkills --dry-run reports a refresh without writing it or the manifest", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = await installAsOldRelease(first.targetDir, "old release text\n");
+  const manifestBefore = await readFile(join(first.targetDir, MANIFEST_FILE), "utf8");
+
+  const result = await runInstallSkills({ cwd, dryRun: true });
+
+  t.assert.deepStrictEqual(result.updated, [SKILL]);
+  t.assert.strictEqual(await readFile(path, "utf8"), "old release text\n");
+  t.assert.strictEqual(
+    await readFile(join(first.targetDir, MANIFEST_FILE), "utf8"),
+    manifestBefore,
+  );
+});
+
+test("runInstallSkills --force on an edited skill records the new hash so later refreshes work", async (t: TestContext) => {
+  const cwd = await makeTmpDir(t);
+  const first = await runInstallSkills({ cwd });
+  const path = join(first.targetDir, SKILL, "SKILL.md");
+  await writeFile(path, "MY EDIT\n", "utf8");
+
+  await runInstallSkills({ cwd, force: true });
+
+  const bundled = await readFile(join(bundledSkillsDir(), SKILL, "SKILL.md"), "utf8");
+  t.assert.strictEqual((await readManifestSkills(first.targetDir))[SKILL], sha256(bundled));
 });
