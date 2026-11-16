@@ -189,9 +189,13 @@ Usage:
 
 Copies every skill bundled with the CLI (analyze-traces, create-adapter,
 research-failure-mode, implement-failure-mode) into the local project's
-skills directory. By default, skills that already exist locally with the
-same content are left untouched, and skills that have been edited locally
-are NOT overwritten unless --force is passed.
+skills directory. Skills that already exist locally with the same content
+are left untouched. A skill that is still exactly the version this command
+installed earlier is refreshed to the bundled one, so upgrading the CLI
+upgrades its skills. A skill you have edited locally is NOT overwritten
+unless --force is passed. The hashes it compares against are kept in
+.installed.json next to the skills; delete that file to treat every
+differing skill as edited.
 
 When --cwd is the @nearform/tracebound package itself (e.g. when invoked
 from a postinstall script inside the package), the command exits 0 without
